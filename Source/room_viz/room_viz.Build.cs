@@ -8,6 +8,6 @@ public class room_viz : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput","NavigationSystem","AIModule" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput","NavigationSystem","AIModule", "HTTP", "Json", "JsonUtilities", "UMG", "ImageWrapper", "Slate", "SlateCore" });
 	}
 }

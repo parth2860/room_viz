@@ -17,7 +17,7 @@
 #include "CollisionQueryParams.h"
 #include "GameFramework/PlayerController.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
-
+#include "ui/UIUserWidget.h"
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
@@ -74,6 +74,25 @@ void Aroom_vizCharacter::BeginPlay()
 		PC->bEnableClickEvents = true;
 		PC->bEnableMouseOverEvents = true;
 	}
+	//widget class
+	if (UIWidgetClass)
+	{
+		UIWidgetInstance = CreateWidget<UUIUserWidget>(GetWorld(), UIWidgetClass);
+		if (UIWidgetInstance)
+		{
+			UIWidgetInstance->AddToViewport();
+			UIWidgetInstance->SetVisibility(ESlateVisibility::Visible);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("Failed to create UI widget from class: %s"), *UIWidgetClass->GetName());
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("UIWidgetClass is not set!"));
+	}
+
 }
 
 //////////////////////////////////////////////////////////////////////////
