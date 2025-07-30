@@ -49,6 +49,10 @@ class Aroom_vizCharacter : public ACharacter
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
 	UInputAction* TouchMoveAction;
 
+	/** Drag Input Action */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = "true"))
+	UInputAction* DragAction;
+
 public:
 	Aroom_vizCharacter();
 	
@@ -63,6 +67,9 @@ protected:
 			
 	/** Called for touch movement input */
 	void TouchMove(const FInputActionValue& Value);
+
+	/** Called for touch movement input */
+	void DragMove(const FInputActionValue& Value);
 
 	/** Helper to issue a nav‑move to the given world location */
 	void MoveCharacterToLocation(const FVector& Destination);

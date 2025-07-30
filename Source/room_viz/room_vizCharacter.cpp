@@ -124,6 +124,9 @@ void Aroom_vizCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputC
 
 		// Touch movement
 		EnhancedInputComponent->BindAction(TouchMoveAction, ETriggerEvent::Triggered, this, &Aroom_vizCharacter::TouchMove);
+
+		// Drag Operation
+		EnhancedInputComponent->BindAction(DragAction, ETriggerEvent::Triggered, this, &Aroom_vizCharacter::DragMove);
 	}
 	else
 	{
@@ -191,6 +194,11 @@ void Aroom_vizCharacter::TouchMove(const FInputActionValue& Value)
 			MoveCharacterToLocation(Hit.ImpactPoint);
 		}
 	}
+}
+
+void Aroom_vizCharacter::DragMove(const FInputActionValue& Value)
+{
+	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("DragMove called!"));
 }
 
 void Aroom_vizCharacter::MoveCharacterToLocation(const FVector& Destination)
