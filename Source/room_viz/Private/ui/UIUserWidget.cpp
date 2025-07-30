@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "ui/UIUserWidget.h"
@@ -16,6 +16,8 @@
 #include "EngineUtils.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/HorizontalBoxSlot.h"
+#include "Blueprint/DragDropOperation.h"
+#include "room_viz/room_vizCharacter.h" // YOUR CHARACTER HEADER
 
 void UUIUserWidget::NativeConstruct()
 {
@@ -55,46 +57,108 @@ void UUIUserWidget::HandleMaterialsReady(const TArray<FTileMaterialData>& Downlo
 void UUIUserWidget::InitializeMaterials(const TArray<FFloorMaterialData>& Materials)
 {
     if (!MaterialsScrollBox) return;
-    MaterialsScrollBox->ClearChildren();
 
-    for (auto& Data : Materials)
+    MaterialsScrollBox->ClearChildren();
+    MaterialEntryMap.Empty();
+
+    for (const FFloorMaterialData& Data : Materials)
     {
-        /*if (UUserWidget* Entry = CreateMaterialEntry(Data))
-            MaterialsScrollBox->AddChild(Entry);*/
-        //
-        if (UWidget* Entry = CreateMaterialEntry(Data))
-        {
-            MaterialsScrollBox->AddChild(Entry);
-        }
+        UBorder* Entry = Cast<UBorder>(CreateMaterialEntry(Data));
+        if (!Entry) continue;
+
+        MaterialsScrollBox->AddChild(Entry);
+        MaterialEntryMap.Add(Entry, Data);
     }
 }
 
-UWidget* UUIUserWidget::CreateMaterialEntry(const FFloorMaterialData& Data)
+UBorder* UUIUserWidget::CreateMaterialEntry(const FFloorMaterialData& Data)
 {
-    // Create Border
+    // 1) Border container
     UBorder* Border = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-    Border->SetPadding(FMargin(5));
+    Border->SetPadding(5);
     Border->SetBrushColor(FLinearColor::Gray);
+    Border->SetVisibility(ESlateVisibility::Visible);
 
-    // Create HorizontalBox
+    // 2) Horizontal box
     UHorizontalBox* HBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
     Border->SetContent(HBox);
 
-    // Add Image
+    // 3) Preview image
     UImage* Img = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
-    if (Data.PreviewTexture)
-    {
-        Img->SetBrushFromTexture(Data.PreviewTexture);
-    }
-    UHorizontalBoxSlot* ImgSlot = HBox->AddChildToHorizontalBox(Img);
-    ImgSlot->SetPadding(FMargin(2));
+    if (Data.PreviewTexture) Img->SetBrushFromTexture(Data.PreviewTexture);
+    HBox->AddChildToHorizontalBox(Img)->SetPadding(2);
 
-    // Add Text
+    // 4) Name text
     UTextBlock* Txt = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
     Txt->SetText(FText::FromString(Data.Name));
-    UHorizontalBoxSlot* TxtSlot = HBox->AddChildToHorizontalBox(Txt);
-    TxtSlot->SetPadding(FMargin(2));
+    HBox->AddChildToHorizontalBox(Txt)->SetPadding(2);
 
-    // Return the border directly � it's a valid widget and can be added to ScrollBox
     return Border;
 }
+
+// Start drag when clicking on one of our Borders
+FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    if (InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))
+    {
+        for (const TPair<UBorder*, FFloorMaterialData>& Pair : MaterialEntryMap)
+        {
+            UBorder* Entry = Pair.Key;
+            if (!Entry) continue;
+
+            const FGeometry& EntryGeo = Entry->GetCachedGeometry();
+            if (EntryGeo.IsUnderLocation(InMouseEvent.GetScreenSpacePosition()))
+            {
+                DraggedBorder = Entry;
+
+                // ✅ This now compiles cleanly and works
+                return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, Entry, EKeys::LeftMouseButton).NativeReply;
+            }
+        }
+    }
+
+    return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+
+
+
+void UUIUserWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
+{
+    if (!DraggedBorder || !MaterialEntryMap.Contains(DraggedBorder)) return;
+
+    const FFloorMaterialData& DraggedData = MaterialEntryMap[DraggedBorder];
+
+    UDragDropOperation* DragOp = UWidgetBlueprintLibrary::CreateDragDropOperation(UDragDropOperation::StaticClass());
+    DragOp->Payload = DraggedBorder;
+    DragOp->DefaultDragVisual = DraggedBorder;
+    DragOp->Pivot = EDragPivot::CenterCenter;
+    OutOperation = DragOp;
+
+    UE_LOG(LogTemp, Log, TEXT("Dragging material: %s"), *DraggedData.Name);
+}
+
+bool UUIUserWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+    if (!InOperation || !InOperation->Payload) return false;
+
+    UBorder* Dropped = Cast<UBorder>(InOperation->Payload);
+    if (!Dropped || !MaterialEntryMap.Contains(Dropped)) return false;
+
+    const FFloorMaterialData& Data = MaterialEntryMap[Dropped];
+
+    APlayerController* PC = GetWorld()->GetFirstPlayerController();
+    if (!PC) return false;
+
+    Aroom_vizCharacter* Character = Cast<Aroom_vizCharacter>(PC->GetPawn());
+    if (Character)
+    {
+        Character->OnMaterialDropped(Data); // Call your character logic
+        return true;
+    }
+
+    return false;
+}
+
+
+

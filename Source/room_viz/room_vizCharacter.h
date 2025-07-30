@@ -92,5 +92,9 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "UI")
 	UUIUserWidget* UIWidgetInstance;
+
+	UFUNCTION(BlueprintCallable)
+	void OnMaterialDropped(const FFloorMaterialData& DroppedMaterial);
+
 };
 

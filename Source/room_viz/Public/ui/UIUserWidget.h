@@ -36,6 +36,9 @@ class ROOM_VIZ_API UUIUserWidget : public UUserWidget
 
 public:
     virtual void NativeConstruct() override;
+    virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+    virtual void NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation) override;
+    virtual bool NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
 
     UFUNCTION(BlueprintCallable, Category = "Floor Materials")
     void InitializeMaterials(const TArray<FFloorMaterialData>& Materials);
@@ -47,5 +50,19 @@ public:
     class UScrollBox* MaterialsScrollBox;
 
     //UUserWidget* CreateMaterialEntry(const FFloorMaterialData& Data);
-    UWidget* CreateMaterialEntry(const FFloorMaterialData& Data);
+    //UWidget* CreateMaterialEntry(const FFloorMaterialData& Data);
+    //
+   
+
+    UPROPERTY(EditAnywhere, Category = "UI")
+    TSubclassOf<UUserWidget> MaterialEntryWidgetClass;
+    // if you prefer your existing CreateMaterialEntry you'd skip this and use the UBorder hack below
+
+
+    // Map each entry Border back to its data
+    TMap<UBorder*, FFloorMaterialData> MaterialEntryMap;
+
+    // Helper to spawn one entry
+    UBorder* CreateMaterialEntry(const FFloorMaterialData& Data);
+    UBorder* DraggedBorder = nullptr;
 };

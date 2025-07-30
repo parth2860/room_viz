@@ -198,25 +198,11 @@ void Aroom_vizCharacter::TouchMove(const FInputActionValue& Value)
 
 void Aroom_vizCharacter::DragMove(const FInputActionValue& Value)
 {
-	GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("DragMove called!"));
+	//GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("DragMove called!"));
 }
 
 void Aroom_vizCharacter::MoveCharacterToLocation(const FVector& Destination)
 {
-	/*if (APlayerController* PC = Cast<APlayerController>(GetController()))
-	{
-		if (UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(GetWorld()))
-		{
-			NavSys->SimpleMoveToLocation(PC, Destination);
-		}
-	}*/
-	//
-	//if (APlayerController* PC = Cast<APlayerController>(GetController()))
-	//{
-	//	// Use the AI Blueprint helper to issue a move command
-	//	UAIBlueprintHelperLibrary::SimpleMoveToLocation(PC, Destination);
-	//}
-	//
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
 		// Issue a navigation request via the AI helper
@@ -224,4 +210,11 @@ void Aroom_vizCharacter::MoveCharacterToLocation(const FVector& Destination)
 	}
 
 
+}
+void Aroom_vizCharacter::OnMaterialDropped(const FFloorMaterialData& DroppedMaterial)
+{
+	UE_LOG(LogTemp, Log, TEXT("Received dropped material: %s"), *DroppedMaterial.Name);
+
+	// Optional: store for use inside DragMove or elsewhere
+	//PendingMaterial = DroppedMaterial;
 }
