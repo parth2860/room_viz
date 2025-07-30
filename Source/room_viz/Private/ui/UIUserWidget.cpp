@@ -23,6 +23,8 @@ void UUIUserWidget::NativeConstruct()
 {
     Super::NativeConstruct();
 
+    SetIsFocusable(true); // ✅ Required for drag input from widget
+
     UWorld* World = GetWorld();
     if (!World) return;
 
@@ -75,14 +77,18 @@ UBorder* UUIUserWidget::CreateMaterialEntry(const FFloorMaterialData& Data)
 {
     // 1) Border container
     UBorder* Border = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+    Border->SetToolTipText(FText::FromString(Data.Name)); // Optional: helps debug
     Border->SetPadding(5);
     Border->SetBrushColor(FLinearColor::Gray);
-    Border->SetVisibility(ESlateVisibility::Visible);
+    // ✅ Enable drag support
+    Border->SetIsEnabled(true);
+    //Border->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+    Border->SetVisibility(ESlateVisibility::Visible); // ✅ critical fix
 
     // 2) Horizontal box
     UHorizontalBox* HBox = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
     Border->SetContent(HBox);
-
+    
     // 3) Preview image
     UImage* Img = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
     if (Data.PreviewTexture) Img->SetBrushFromTexture(Data.PreviewTexture);
@@ -106,21 +112,27 @@ FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const
             UBorder* Entry = Pair.Key;
             if (!Entry) continue;
 
+            FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
             const FGeometry& EntryGeo = Entry->GetCachedGeometry();
-            if (EntryGeo.IsUnderLocation(InMouseEvent.GetScreenSpacePosition()))
+
+            // Log screen position & border info
+            UE_LOG(LogTemp, Log, TEXT("Checking entry: %s"), *Pair.Value.Name);
+
+            if (EntryGeo.IsUnderLocation(ScreenPos))
             {
                 DraggedBorder = Entry;
+                UE_LOG(LogTemp, Log, TEXT("Mouse down on: %s"), *Pair.Value.Name);
 
-                // ✅ This now compiles cleanly and works
-                return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, Entry, EKeys::LeftMouseButton).NativeReply;
+               // return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, Entry, EKeys::LeftMouseButton).NativeReply;
+               // ✅ FIX: Pass `this` to DetectDragIfPressed
+                return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply;
+
             }
         }
     }
 
     return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
-
-
 
 
 void UUIUserWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
@@ -160,5 +172,9 @@ bool UUIUserWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEve
     return false;
 }
 
+bool UUIUserWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+    return true;
+}
 
 

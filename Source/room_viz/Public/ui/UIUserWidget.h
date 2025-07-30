@@ -65,4 +65,5 @@ public:
     // Helper to spawn one entry
     UBorder* CreateMaterialEntry(const FFloorMaterialData& Data);
     UBorder* DraggedBorder = nullptr;
+    bool NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation);
 };
