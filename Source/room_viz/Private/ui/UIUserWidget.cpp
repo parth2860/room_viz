@@ -22,6 +22,7 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Input/Reply.h"
 #include "Input/Events.h"
+#include "Engine/StaticMeshActor.h"
 
 
 
@@ -240,14 +241,42 @@ void UUIUserWidget::NativeOnDragDetected(const FGeometry& InGeometry,
 }
 
 // 3) Drag‐over: let us know when pointer moves during a drag
-bool UUIUserWidget::NativeOnDragOver(const FGeometry& InGeometry,
-    const FDragDropEvent& InDragDropEvent,
-    UDragDropOperation* InOperation)
+bool UUIUserWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
 {
-    UE_LOG(LogTemp, Verbose, TEXT("[UI] NativeOnDragOver at (%f,%f)"),
-        InDragDropEvent.GetScreenSpacePosition().X,
-        InDragDropEvent.GetScreenSpacePosition().Y);
-    // return true so that OnDrop will be called
+    FVector2D ScreenPos = InDragDropEvent.GetScreenSpacePosition();
+    UWorld* World = GetWorld();
+    if (!World) return true;
+    APlayerController* PC = World->GetFirstPlayerController();
+    if (!PC) return true;
+
+    FVector WorldOrigin, WorldDir;
+    if (PC->DeprojectScreenPositionToWorld(ScreenPos.X, ScreenPos.Y, WorldOrigin, WorldDir))
+    {
+        FHitResult Hit;
+        FCollisionQueryParams Params;
+        if (APawn* Pawn = PC->GetPawn()) Params.AddIgnoredActor(Pawn);
+
+        if (World->LineTraceSingleByChannel(Hit, WorldOrigin, WorldOrigin + WorldDir * 10000.f, ECC_Visibility, Params))
+        {
+            AActor* HitActor = Hit.GetActor();
+            if (HitActor && HitActor->ActorHasTag("floor")) {
+                UPrimitiveComponent* Comp = Hit.GetComponent();
+                if (Comp && Comp != HighlightedComponent) {
+                    if (HighlightedComponent.IsValid())
+                        HighlightedComponent->SetRenderCustomDepth(false);
+                    Comp->SetRenderCustomDepth(true);
+                    HighlightedComponent = Comp;
+                }
+                return true;
+            }
+        }
+    }
+
+    if (HighlightedComponent.IsValid()) {
+        HighlightedComponent->SetRenderCustomDepth(false);
+        HighlightedComponent = nullptr;
+    }
+
     return true;
 }
 
@@ -294,94 +323,59 @@ FReply UUIUserWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const F
 {
     if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
     {
-        // Early null check
-        if (!IsValid(DraggedBorder))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: DraggedBorder is null or invalid"));
-            DraggedBorder = nullptr;
+        if (!IsValid(DraggedBorder)) {
+            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: DraggedBorder null"));
             return FReply::Handled();
         }
 
-        // Defensive: ensure it’s still in the map
-        if (!MaterialEntryMap.Contains(DraggedBorder))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: DraggedBorder missing in map"));
-            DraggedBorder = nullptr;
+        if (!MaterialEntryMap.Contains(DraggedBorder)) {
+            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: Map miss"));
             return FReply::Handled();
         }
 
         const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
         const FFloorMaterialData& Data = MaterialEntryMap[DraggedBorder];
 
-        // More validation
-        if (!Data.MaterialAsset)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: MaterialAsset for '%s' is null"), *Data.Name);
-            DraggedBorder = nullptr;
+        if (!IsValid(Data.MaterialAsset)) {
+            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: Invalid material asset"));
             return FReply::Handled();
         }
-
-        DraggedBorder = nullptr; // clear state now
 
         UWorld* World = GetWorld();
-        APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
-        if (!PC)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: No player controller"));
-            return FReply::Handled();
-        }
+        if (!World) return FReply::Handled();
+        APlayerController* PC = World->GetFirstPlayerController();
+        if (!PC) return FReply::Handled();
 
         FVector WorldOrigin, WorldDir;
         if (!PC->DeprojectScreenPositionToWorld(ScreenPos.X, ScreenPos.Y, WorldOrigin, WorldDir))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: Failed to deproject"));
             return FReply::Handled();
-        }
 
         FHitResult Hit;
         FCollisionQueryParams Params;
         if (APawn* Pawn = PC->GetPawn()) Params.AddIgnoredActor(Pawn);
 
-        const bool bHit = World->LineTraceSingleByChannel(
-            Hit,
-            WorldOrigin,
-            WorldOrigin + WorldDir * 10000.f,
-            ECC_Visibility,
-            Params
-        );
-
-        if (bHit)
+        if (World->LineTraceSingleByChannel(Hit, WorldOrigin, WorldOrigin + WorldDir * 10000.f, ECC_Visibility, Params))
         {
-            UPrimitiveComponent* HitComponent = Hit.GetComponent();
-            if (!IsValid(HitComponent))
-            {
-                UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: Hit component is null or invalid"));
-                return FReply::Handled();
+            if (Hit.GetActor() && Hit.GetActor()->ActorHasTag("floor")) {
+                UPrimitiveComponent* Comp = Hit.GetComponent();
+                if (IsValid(Comp)) {
+                    Comp->SetMaterial(0, Data.MaterialAsset);
+                    UE_LOG(LogTemp, Log, TEXT("[UI] ✅ DropBackstop applied '%s' to %s"), *Data.Name, *Comp->GetName());
+                }
             }
-
-            if (!IsValid(Data.MaterialAsset))
-            {
-                UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: MaterialAsset is null or invalid for '%s'"), *Data.Name);
-                return FReply::Handled();
-            }
-
-            HitComponent->SetMaterial(0, Data.MaterialAsset);
-
-            UE_LOG(LogTemp, Log, TEXT("[UI] ✅ DropBackstop applied '%s' to %s"),
-                *Data.Name, *HitComponent->GetName());
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[UI] DropBackstop: Trace missed or hit nothing"));
         }
 
+        // Clear highlight if any
+        if (HighlightedComponent.IsValid()) {
+            HighlightedComponent->SetRenderCustomDepth(false);
+            HighlightedComponent = nullptr;
+        }
 
+        DraggedBorder = nullptr;
         return FReply::Handled();
     }
-
     return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
 }
-
 
 void UUIUserWidget::NativeOnDragCancelled(const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
 {

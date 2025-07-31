@@ -90,4 +90,8 @@ public:
 
     UPROPERTY()
     UBorder* DropTarget;
+
+    // Inside your UIUserWidget class
+    TWeakObjectPtr<UPrimitiveComponent> HighlightedComponent = nullptr;
+
 };
