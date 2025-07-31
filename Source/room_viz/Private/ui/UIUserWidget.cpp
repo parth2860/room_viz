@@ -184,29 +184,26 @@ UBorder* UUIUserWidget::CreateMaterialEntry(const FFloorMaterialData& Data)
     return Border;
 }
 // 1) Mouse‐down: start drag
-FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
-    const FPointerEvent& InMouseEvent)
+FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
     if (InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[UI] NativeOnMouseButtonDown fired at (%f,%f)"),
-            InMouseEvent.GetScreenSpacePosition().X,
-            InMouseEvent.GetScreenSpacePosition().Y);
-
         const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
         CachedMousePosition = ScreenPos;
 
         for (auto& Pair : MaterialEntryMap)
         {
             UBorder* Entry = Pair.Key;
-            if (!Entry) continue;
+            if (!IsValid(Entry)) continue;
 
-            if (Entry->GetCachedGeometry().IsUnderLocation(ScreenPos))
+            // Get geometry in safe way
+            const FGeometry* EntryGeometry = Entry->GetCachedWidget().IsValid() ? &Entry->GetCachedGeometry() : nullptr;
+            if (!EntryGeometry) continue;
+
+            if (EntryGeometry->IsUnderLocation(ScreenPos))
             {
                 DraggedBorder = Entry;
-                UE_LOG(LogTemp, Warning, TEXT("[UI] Detected drag start on '%s'"),
-                    *Pair.Value.Name);
-
+                UE_LOG(LogTemp, Warning, TEXT("[UI] Detected drag start on '%s'"), *Pair.Value.Name);
                 return UWidgetBlueprintLibrary::DetectDragIfPressed(
                     InMouseEvent, Entry, EKeys::LeftMouseButton
                 ).NativeReply;
@@ -216,6 +213,7 @@ FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
 
     return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
+
 
 // 2) Drag‐detected: create payload
 void UUIUserWidget::NativeOnDragDetected(const FGeometry& InGeometry,
@@ -294,12 +292,20 @@ bool UUIUserWidget::NativeOnDrop(const FGeometry& InGeometry,
 // 5) Mouse‐up: finalize drop
 FReply UUIUserWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
-    if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && DraggedBorder)
+    if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
     {
-        // Validate pointer to prevent crash
-        if (!IsValid(DraggedBorder) || !MaterialEntryMap.Contains(DraggedBorder))
+        // Early null check
+        if (!IsValid(DraggedBorder))
         {
-            UE_LOG(LogTemp, Error, TEXT("[UI] MouseUp: DraggedBorder is invalid or missing from map"));
+            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: DraggedBorder is null or invalid"));
+            DraggedBorder = nullptr;
+            return FReply::Handled();
+        }
+
+        // Defensive: ensure it’s still in the map
+        if (!MaterialEntryMap.Contains(DraggedBorder))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: DraggedBorder missing in map"));
             DraggedBorder = nullptr;
             return FReply::Handled();
         }
@@ -307,28 +313,28 @@ FReply UUIUserWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const F
         const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
         const FFloorMaterialData& Data = MaterialEntryMap[DraggedBorder];
 
-        // Defensive: material asset check
+        // More validation
         if (!Data.MaterialAsset)
         {
-            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: '%s' has no MaterialAsset"), *Data.Name);
+            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: MaterialAsset for '%s' is null"), *Data.Name);
             DraggedBorder = nullptr;
             return FReply::Handled();
         }
 
-        DraggedBorder = nullptr; // clear state early
+        DraggedBorder = nullptr; // clear state now
 
         UWorld* World = GetWorld();
         APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
         if (!PC)
         {
-            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: missing player controller"));
+            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: No player controller"));
             return FReply::Handled();
         }
 
         FVector WorldOrigin, WorldDir;
         if (!PC->DeprojectScreenPositionToWorld(ScreenPos.X, ScreenPos.Y, WorldOrigin, WorldDir))
         {
-            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: failed to deproject"));
+            UE_LOG(LogTemp, Warning, TEXT("[UI] MouseUp: Failed to deproject"));
             return FReply::Handled();
         }
 
@@ -344,16 +350,31 @@ FReply UUIUserWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const F
             Params
         );
 
-        if (bHit && Hit.GetComponent())
+        if (bHit)
         {
-            Hit.GetComponent()->SetMaterial(0, Data.MaterialAsset);
+            UPrimitiveComponent* HitComponent = Hit.GetComponent();
+            if (!IsValid(HitComponent))
+            {
+                UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: Hit component is null or invalid"));
+                return FReply::Handled();
+            }
+
+            if (!IsValid(Data.MaterialAsset))
+            {
+                UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: MaterialAsset is null or invalid for '%s'"), *Data.Name);
+                return FReply::Handled();
+            }
+
+            HitComponent->SetMaterial(0, Data.MaterialAsset);
+
             UE_LOG(LogTemp, Log, TEXT("[UI] ✅ DropBackstop applied '%s' to %s"),
-                *Data.Name, *Hit.GetComponent()->GetName());
+                *Data.Name, *HitComponent->GetName());
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("[UI] DropBackstop trace missed or hit null component"));
+            UE_LOG(LogTemp, Warning, TEXT("[UI] DropBackstop: Trace missed or hit nothing"));
         }
+
 
         return FReply::Handled();
     }
@@ -361,3 +382,11 @@ FReply UUIUserWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const F
     return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
 }
 
+
+void UUIUserWidget::NativeOnDragCancelled(const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+    Super::NativeOnDragCancelled(InDragDropEvent, InOperation);
+
+    UE_LOG(LogTemp, Warning, TEXT("[UI] DragCancelled: clearing drag state"));
+    DraggedBorder = nullptr;
+}
