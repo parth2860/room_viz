@@ -17,7 +17,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Blueprint/DragDropOperation.h"
-#include "room_viz/room_vizCharacter.h" // YOUR CHARACTER HEADER
+#include "room_viz/room_vizCharacter.h" //  CHARACTER HEADER
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Input/Reply.h"
@@ -31,25 +31,36 @@ void UUIUserWidget::NativeConstruct()
     Super::NativeConstruct();
 
     const FString MaterialPath = TEXT("/Game/assets/M_BaseMaterial.M_BaseMaterial");
-    BaseMaterial = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, *MaterialPath));
+    BaseMaterial = Cast<UMaterialInterface>(StaticLoadObject(
+        UMaterialInterface::StaticClass(), nullptr, *MaterialPath));
     if (!BaseMaterial)
     {
         UE_LOG(LogTemp, Error, TEXT("❌ Failed to load BaseMaterial from: %s"), *MaterialPath);
     }
 
-    SetIsFocusable(true);  // Critical
+    // Make widget focusable and visible so it can receive drag/drop
+    SetIsFocusable(true);
     SetVisibility(ESlateVisibility::Visible);
 
-    // Root canvas
+    // Ensure root canvas exists and can get events
     if (!WidgetTree->RootWidget)
     {
-        UCanvasPanel* RootPanel = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("RootCanvas"));
+        UCanvasPanel* RootPanel = WidgetTree->ConstructWidget<UCanvasPanel>(
+            UCanvasPanel::StaticClass(), TEXT("RootCanvas"));
         WidgetTree->RootWidget = RootPanel;
+        RootPanel->SetVisibility(ESlateVisibility::Visible);
+        RootPanel->SetIsEnabled(true);
     }
 
-    // Create ScrollBox (direct child of root)
-    MaterialsScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(), TEXT("MaterialsScrollBox"));
+    // Create the scroll box for materials
+    MaterialsScrollBox = WidgetTree->ConstructWidget<UScrollBox>(
+        UScrollBox::StaticClass(), TEXT("MaterialsScrollBox"));
 
+    // ── CRITICAL FIX: let pointer events pass through to the root ──
+    MaterialsScrollBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+    MaterialsScrollBox->SetIsEnabled(false);
+
+    // Add it under the root canvas
     if (UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree->RootWidget))
     {
         UCanvasPanelSlot* ScrollSlot = RootCanvas->AddChildToCanvas(MaterialsScrollBox);
@@ -57,20 +68,19 @@ void UUIUserWidget::NativeConstruct()
         ScrollSlot->SetOffsets(FMargin(0.f));
     }
 
-    // Bind material manager
+    // Bind to the API manager to get our textures
     if (UWorld* World = GetWorld())
     {
         for (TActorIterator<AMaterialAPIManager> It(World); It; ++It)
         {
-            if (AMaterialAPIManager* Mgr = *It)
-            {
-                Mgr->OnMaterialsReady.AddDynamic(this, &UUIUserWidget::HandleMaterialsReady);
-                Mgr->FetchTileMaterials();
-                break;
-            }
+            AMaterialAPIManager* Mgr = *It;
+            Mgr->OnMaterialsReady.AddDynamic(this, &UUIUserWidget::HandleMaterialsReady);
+            Mgr->FetchTileMaterials();
+            break;
         }
     }
 }
+
 
 
 void UUIUserWidget::HandleMaterialsReady(const TArray<FTileMaterialData>& DownloadedTiles)
@@ -174,28 +184,33 @@ UBorder* UUIUserWidget::CreateMaterialEntry(const FFloorMaterialData& Data)
 
     return Border;
 }
-
-// Start drag when clicking on one of our Borders
-FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+// 1) Mouse‐down: start drag
+FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
+    const FPointerEvent& InMouseEvent)
 {
     if (InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))
     {
-        FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
-        CachedMousePosition = ScreenPos;  // ✅ FIX: Cache for drop use
+        UE_LOG(LogTemp, Warning, TEXT("[UI] NativeOnMouseButtonDown fired at (%f,%f)"),
+            InMouseEvent.GetScreenSpacePosition().X,
+            InMouseEvent.GetScreenSpacePosition().Y);
 
-        for (const TPair<UBorder*, FFloorMaterialData>& Pair : MaterialEntryMap)
+        const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
+        CachedMousePosition = ScreenPos;
+
+        for (auto& Pair : MaterialEntryMap)
         {
             UBorder* Entry = Pair.Key;
             if (!Entry) continue;
 
-            const FGeometry& EntryGeo = Entry->GetCachedGeometry();
-
-            if (EntryGeo.IsUnderLocation(ScreenPos))
+            if (Entry->GetCachedGeometry().IsUnderLocation(ScreenPos))
             {
                 DraggedBorder = Entry;
-                UE_LOG(LogTemp, Log, TEXT("Mouse down on: %s"), *Pair.Value.Name);
+                UE_LOG(LogTemp, Warning, TEXT("[UI] Detected drag start on '%s'"),
+                    *Pair.Value.Name);
 
-                return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, Entry, EKeys::LeftMouseButton).NativeReply;
+                return UWidgetBlueprintLibrary::DetectDragIfPressed(
+                    InMouseEvent, Entry, EKeys::LeftMouseButton
+                ).NativeReply;
             }
         }
     }
@@ -203,64 +218,247 @@ FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const
     return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
-
-
-void UUIUserWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
+// 2) Drag‐detected: create payload
+void UUIUserWidget::NativeOnDragDetected(const FGeometry& InGeometry,
+    const FPointerEvent& InMouseEvent,
+    UDragDropOperation*& OutOperation)
 {
-    if (!DraggedBorder || !MaterialEntryMap.Contains(DraggedBorder)) return;
+    if (!DraggedBorder || !MaterialEntryMap.Contains(DraggedBorder))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[UI] NativeOnDragDetected: no valid DraggedBorder"));
+        return;
+    }
 
-    const FFloorMaterialData& DraggedData = MaterialEntryMap[DraggedBorder];
+    const auto& Data = MaterialEntryMap[DraggedBorder];
+    UE_LOG(LogTemp, Warning, TEXT("[UI] NativeOnDragDetected: creating op for '%s'"),
+        *Data.Name);
 
-    UDragDropOperation* DragOp = UWidgetBlueprintLibrary::CreateDragDropOperation(UDragDropOperation::StaticClass());
+    UDragDropOperation* DragOp = UWidgetBlueprintLibrary::CreateDragDropOperation(
+        UDragDropOperation::StaticClass()
+    );
     DragOp->Payload = DraggedBorder;
     DragOp->DefaultDragVisual = DraggedBorder;
     DragOp->Pivot = EDragPivot::CenterCenter;
     OutOperation = DragOp;
-
-    UE_LOG(LogTemp, Log, TEXT("Dragging material: %s"), *DraggedData.Name);
 }
-bool UUIUserWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+
+// 3) Drag‐over: let us know when pointer moves during a drag
+bool UUIUserWidget::NativeOnDragOver(const FGeometry& InGeometry,
+    const FDragDropEvent& InDragDropEvent,
+    UDragDropOperation* InOperation)
 {
+    UE_LOG(LogTemp, Verbose, TEXT("[UI] NativeOnDragOver at (%f,%f)"),
+        InDragDropEvent.GetScreenSpacePosition().X,
+        InDragDropEvent.GetScreenSpacePosition().Y);
+    // return true so that OnDrop will be called
     return true;
 }
 
-bool UUIUserWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+// 4) Drop: apply material
+bool UUIUserWidget::NativeOnDrop(const FGeometry& InGeometry,
+    const FDragDropEvent& InDragDropEvent,
+    UDragDropOperation* InOperation)
 {
-    if (!InOperation || !InOperation->Payload) return false;
+    UE_LOG(LogTemp, Warning, TEXT("[UI] NativeOnDrop fired at (%f,%f)"),
+        InDragDropEvent.GetScreenSpacePosition().X,
+        InDragDropEvent.GetScreenSpacePosition().Y);
 
-    UBorder* Dropped = Cast<UBorder>(InOperation->Payload);
-    if (!Dropped || !MaterialEntryMap.Contains(Dropped)) return false;
-
-    const FFloorMaterialData& Data = MaterialEntryMap[Dropped];
-
-    // Convert drop screen position to world
-    FVector2D ScreenPos = InDragDropEvent.GetScreenSpacePosition();
-
-    APlayerController* PC = GetWorld()->GetFirstPlayerController();
-    if (!PC) return false;
-
-    FVector WorldOrigin, WorldDirection;
-    if (PC->DeprojectScreenPositionToWorld(ScreenPos.X, ScreenPos.Y, WorldOrigin, WorldDirection))
+    if (!InOperation || !InOperation->Payload)
     {
-        FVector TraceStart = WorldOrigin;
-        FVector TraceEnd = WorldOrigin + (WorldDirection * 10000.f);
-
-        FHitResult Hit;
-        FCollisionQueryParams Params;
-        Params.bReturnPhysicalMaterial = false;
-        Params.AddIgnoredActor(PC->GetPawn());
-
-        if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
-        {
-            UPrimitiveComponent* HitComp = Hit.GetComponent();
-            if (HitComp && Data.MaterialAsset)
-            {
-                HitComp->SetMaterial(0, Data.MaterialAsset);
-                UE_LOG(LogTemp, Log, TEXT("✅ Applied material: %s to %s"), *Data.Name, *HitComp->GetName());
-                return true;
-            }
-        }
+        UE_LOG(LogTemp, Error, TEXT("[UI] Drop: invalid operation or payload"));
+        return false;
     }
 
-    return false;
+    UBorder* DroppedBorder = Cast<UBorder>(InOperation->Payload);
+    if (!DroppedBorder || !MaterialEntryMap.Contains(DroppedBorder))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[UI] Drop: payload not a known material entry"));
+        return false;
+    }
+
+    const FFloorMaterialData& Data = MaterialEntryMap[DroppedBorder];
+    if (!Data.MaterialAsset)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[UI] Drop: '%s' has no MaterialAsset"), *Data.Name);
+        return false;
+    }
+
+    // Get the PlayerController and cast pawn to your character
+    APlayerController* PC = GetOwningPlayer();
+    if (!PC)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[UI] Drop: no PlayerController"));
+        return false;
+    }
+
+    if (Aroom_vizCharacter* MyChar = Cast<Aroom_vizCharacter>(PC->GetPawn()))
+    {
+        // Forward the drop and screen position
+        MyChar->OnMaterialDropped(Data, InDragDropEvent.GetScreenSpacePosition());
+        UE_LOG(LogTemp, Log, TEXT("[UI] Forwarded drop of '%s' to character"), *Data.Name);
+        return true;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("[UI] Drop: pawn is not ARoom_vizCharacter"));
+        return false;
+    }
 }
+
+// 5) Mouse‐up: finalize drop
+/*
+FReply UUIUserWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+    // Only handle left‐mouse release
+    if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && DraggedBorder)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[UI] MouseButtonUp as drop at (%f,%f)"),
+            InMouseEvent.GetScreenSpacePosition().X,
+            InMouseEvent.GetScreenSpacePosition().Y);
+
+        // Grab the data we dragged
+        const FFloorMaterialData& Data = MaterialEntryMap[DraggedBorder];
+
+        // Deproject screen → world
+        APlayerController* PC = GetWorld()->GetFirstPlayerController();
+        FVector WorldOrigin, WorldDir;
+        FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
+        if (!PC || !PC->DeprojectScreenPositionToWorld(ScreenPos.X, ScreenPos.Y, WorldOrigin, WorldDir))
+        {
+            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: deprojection failed"));
+            DraggedBorder = nullptr;
+            return FReply::Handled();
+        }
+
+        // Trace
+        FHitResult Hit;
+        FCollisionQueryParams Params;
+        Params.AddIgnoredActor(PC->GetPawn());
+        FVector TraceEnd = WorldOrigin + WorldDir * 10000.f;
+
+        if (GetWorld()->LineTraceSingleByChannel(Hit, WorldOrigin, TraceEnd, ECC_Visibility, Params))
+        {
+            if (UPrimitiveComponent* HitComp = Hit.GetComponent())
+            {
+                HitComp->SetMaterial(0, Data.MaterialAsset);
+                UE_LOG(LogTemp, Log, TEXT("[UI] ✅ DropBackstop applied '%s' to %s"),
+                    *Data.Name, *HitComp->GetName());
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[UI] DropBackstop hit no component"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[UI] DropBackstop trace missed"));
+        }
+
+        // Clear drag state
+        DraggedBorder = nullptr;
+        return FReply::Handled();
+    }
+
+    return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}*/
+FReply UUIUserWidget::NativeOnMouseButtonUp(const FGeometry& InGeometry,
+                                           const FPointerEvent& InMouseEvent)
+{
+    // Only handle a left-mouse release if we actually started a drag
+    if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && DraggedBorder)
+    {
+        const FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
+        UE_LOG(LogTemp, Warning, TEXT("[UI] MouseButtonUp at (%f,%f)"), ScreenPos.X, ScreenPos.Y);
+
+        // Grab and validate the border we dragged
+        UBorder* DroppedBorder = DraggedBorder;
+        if (!DroppedBorder || !MaterialEntryMap.Contains(DroppedBorder))
+        {
+            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: invalid border or no map entry"));
+            DraggedBorder = nullptr;
+            return FReply::Handled();
+        }
+
+        // Retrieve the material data
+        const FFloorMaterialData& Data = MaterialEntryMap[DroppedBorder];
+        if (!Data.MaterialAsset)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: '%s' has no MaterialAsset"), *Data.Name);
+            DraggedBorder = nullptr;
+            return FReply::Handled();
+        }
+
+        // Clear drag state immediately to prevent reuse
+        DraggedBorder = nullptr;
+
+        // Ensure we have a valid world
+        UWorld* World = GetWorld();
+        if (!World)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: no valid World"));
+            return FReply::Handled();
+        }
+
+        // Use the first player controller (guaranteed in PIE/editor)
+        APlayerController* PC = World->GetFirstPlayerController();
+        if (!PC)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: no PlayerController"));
+            return FReply::Handled();
+        }
+
+        // Deproject screen to world
+        FVector WorldOrigin, WorldDir;
+        if (!PC->DeprojectScreenPositionToWorld(ScreenPos.X, ScreenPos.Y, WorldOrigin, WorldDir))
+        {
+            UE_LOG(LogTemp, Error, TEXT("[UI] DropBackstop: deprojection failed"));
+            return FReply::Handled();
+        }
+
+        // Log the ray
+        UE_LOG(LogTemp, Warning, TEXT("[UI] DropBackstop ray: Origin=%s Dir=%s"),
+               *WorldOrigin.ToString(), *WorldDir.ToString());
+
+        // Perform line trace
+        FHitResult Hit;
+        FCollisionQueryParams Params;
+        APawn* Pawn = PC->GetPawn();
+        if (Pawn)
+        {
+            Params.AddIgnoredActor(Pawn);
+        }
+        bool bHit = World->LineTraceSingleByChannel(
+            Hit,
+            WorldOrigin,
+            WorldOrigin + WorldDir * 10000.f,
+            ECC_Visibility,
+            Params
+        );
+
+        if (bHit)
+        {
+            UPrimitiveComponent* HitComp = Hit.GetComponent();
+            if (HitComp)
+            {
+                // Finally apply the material
+                HitComp->SetMaterial(0, Data.MaterialAsset);
+                UE_LOG(LogTemp, Log, TEXT("[UI] ✅ DropBackstop applied '%s' to %s"),
+                       *Data.Name, *HitComp->GetName());
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[UI] DropBackstop: Hit no component"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[UI] DropBackstop: trace missed"));
+        }
+
+        return FReply::Handled();
+    }
+
+    return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
+

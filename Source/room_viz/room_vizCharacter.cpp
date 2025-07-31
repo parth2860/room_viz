@@ -68,7 +68,6 @@ Aroom_vizCharacter::Aroom_vizCharacter()
 
 void Aroom_vizCharacter::BeginPlay()
 {
-	// Call the base class  
 	Super::BeginPlay();
 
 	// Enable mouse cursor & click/hover events on the PC
@@ -78,7 +77,8 @@ void Aroom_vizCharacter::BeginPlay()
 		PC->bEnableClickEvents = true;
 		PC->bEnableMouseOverEvents = true;
 	}
-	//widget class
+
+	// Create & add our UI widget
 	if (UIWidgetClass)
 	{
 		UIWidgetInstance = CreateWidget<UUIUserWidget>(GetWorld(), UIWidgetClass);
@@ -86,17 +86,25 @@ void Aroom_vizCharacter::BeginPlay()
 		{
 			UIWidgetInstance->AddToViewport();
 			UIWidgetInstance->SetVisibility(ESlateVisibility::Visible);
+
+			// ─── KEY: route mouse events to the UI first ───
+			if (APlayerController* PC2 = Cast<APlayerController>(GetController()))
+			{
+				FInputModeGameAndUI InputMode;
+				InputMode.SetWidgetToFocus(UIWidgetInstance->TakeWidget());
+				InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+				PC2->SetInputMode(InputMode);
+			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("Failed to create UI widget from class: %s"), *UIWidgetClass->GetName());
+			UE_LOG(LogTemp, Error, TEXT("Failed to create UIWidgetInstance"));
 		}
 	}
 	else
 	{
 		UE_LOG(LogTemp, Error, TEXT("UIWidgetClass is not set!"));
 	}
-
 }
 
 //////////////////////////////////////////////////////////////////////////

@@ -49,6 +49,9 @@ public:
     virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
     virtual void NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation) override;
     virtual bool NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation) override;
+    bool NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation);
+    virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+
 
     UFUNCTION(BlueprintCallable, Category = "Floor Materials")
     void InitializeMaterials(const TArray<FFloorMaterialData>& Materials);
@@ -75,8 +78,7 @@ public:
     // Helper to spawn one entry
     UBorder* CreateMaterialEntry(const FFloorMaterialData& Data);
     UBorder* DraggedBorder = nullptr;
-    bool NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation);
-
+    
     FVector2D CachedMousePosition;
 
     UPROPERTY(EditAnywhere, Category = "Runtime")
