@@ -94,7 +94,8 @@ public:
 	UUIUserWidget* UIWidgetInstance;
 
 	UFUNCTION(BlueprintCallable)
-	void OnMaterialDropped(const FFloorMaterialData& DroppedMaterial);
-
+	//void OnMaterialDropped(const FFloorMaterialData& DroppedMaterial, const FVector2D& ScreenPosition);
+	//void OnMaterialDropped(const FFloorMaterialData& Data, FVector2D DropPosition);
+	void OnMaterialDropped(const FFloorMaterialData& DroppedData, const FVector2D& ScreenPosition);
 };
 

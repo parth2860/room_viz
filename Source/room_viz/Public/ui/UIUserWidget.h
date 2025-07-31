@@ -1,9 +1,14 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "UObject/ConstructorHelpers.h"
+#include "Materials/MaterialInterface.h"
+#include "dataclass/MaterialAPIManager.h"
+#include "Components/SizeBox.h"
+#include "Components/ScrollBox.h"
 #include "UIUserWidget.generated.h"
 
 class UScrollBox;
@@ -27,6 +32,10 @@ struct FFloorMaterialData
 
     UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Floor Material")
     FString MaterialURL;
+
+    // ✅ ADD THIS:
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Floor Material")
+    UMaterialInterface* MaterialAsset;
 };
 
 UCLASS()
@@ -34,6 +43,7 @@ class ROOM_VIZ_API UUIUserWidget : public UUserWidget
 {
     GENERATED_BODY()
 
+    //UUIUserWidget(const FObjectInitializer& ObjectInitializer);
 public:
     virtual void NativeConstruct() override;
     virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
@@ -66,4 +76,15 @@ public:
     UBorder* CreateMaterialEntry(const FFloorMaterialData& Data);
     UBorder* DraggedBorder = nullptr;
     bool NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation);
+
+    FVector2D CachedMousePosition;
+
+    UPROPERTY(EditAnywhere, Category = "Runtime")
+    UMaterialInterface* BaseMaterial;
+
+    UPROPERTY()
+    USizeBox* DropCatcher;
+
+    UPROPERTY()
+    UBorder* DropTarget;
 };

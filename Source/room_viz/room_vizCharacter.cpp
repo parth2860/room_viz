@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "room_vizCharacter.h"
 #include "Engine/LocalPlayer.h"
@@ -18,6 +18,10 @@
 #include "GameFramework/PlayerController.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "ui/UIUserWidget.h"
+#include "Kismet/GameplayStatics.h"
+#include "Framework/Application/SlateApplication.h" // at top
+#include "Components/PrimitiveComponent.h"
+#include "Engine/StaticMeshActor.h" // ✅ Add this at top of .cpp
 
 DEFINE_LOG_CATEGORY(LogTemplateCharacter);
 
@@ -211,10 +215,62 @@ void Aroom_vizCharacter::MoveCharacterToLocation(const FVector& Destination)
 
 
 }
-void Aroom_vizCharacter::OnMaterialDropped(const FFloorMaterialData& DroppedMaterial)
-{
-	UE_LOG(LogTemp, Log, TEXT("Received dropped material: %s"), *DroppedMaterial.Name);
 
-	// Optional: store for use inside DragMove or elsewhere
-	//PendingMaterial = DroppedMaterial;
+void Aroom_vizCharacter::OnMaterialDropped(const FFloorMaterialData& DroppedData, const FVector2D& ScreenPosition)
+{
+	UE_LOG(LogTemp, Warning, TEXT("🧩 OnMaterialDropped called with material: %s"), *DroppedData.Name);
+	UE_LOG(LogTemp, Log, TEXT("🖱️ ScreenPosition: X=%f, Y=%f"), ScreenPosition.X, ScreenPosition.Y);
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ PlayerController not found"));
+		return;
+	}
+
+	if (!DroppedData.MaterialAsset)
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ Dropped material is null"));
+		return;
+	}
+
+	FVector WorldOrigin, WorldDirection;
+	if (!PC->DeprojectScreenPositionToWorld(ScreenPosition.X, ScreenPosition.Y, WorldOrigin, WorldDirection))
+	{
+		UE_LOG(LogTemp, Error, TEXT("❌ Deprojection failed"));
+		return;
+	}
+
+	FVector TraceStart = WorldOrigin;
+	FVector TraceEnd = WorldOrigin + (WorldDirection * 10000.0f);
+
+	UE_LOG(LogTemp, Log, TEXT("🧭 LineTrace: %s -> %s"), *TraceStart.ToString(), *TraceEnd.ToString());
+
+	DrawDebugLine(GetWorld(), TraceStart, TraceEnd, FColor::Red, false, 5.0f, 0, 2.0f);
+
+	FHitResult Hit;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+
+	if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+	{
+		DrawDebugSphere(GetWorld(), Hit.ImpactPoint, 25.0f, 16, FColor::Green, false, 5.0f);
+
+		UPrimitiveComponent* HitComp = Hit.GetComponent();
+		UE_LOG(LogTemp, Log, TEXT("✅ Hit component: %s"), *GetNameSafe(HitComp));
+
+		if (UStaticMeshComponent* MeshComp = Cast<UStaticMeshComponent>(HitComp))
+		{
+			MeshComp->SetMaterial(0, DroppedData.MaterialAsset);
+			UE_LOG(LogTemp, Log, TEXT("🎯 Applied material to mesh: %s"), *MeshComp->GetName());
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("❌ Hit component is not UStaticMeshComponent"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("❌ Line trace did not hit anything"));
+	}
 }

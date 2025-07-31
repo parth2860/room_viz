@@ -18,47 +18,118 @@
 #include "Components/HorizontalBoxSlot.h"
 #include "Blueprint/DragDropOperation.h"
 #include "room_viz/room_vizCharacter.h" // YOUR CHARACTER HEADER
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Input/Reply.h"
+#include "Input/Events.h"
+
+
+
 
 void UUIUserWidget::NativeConstruct()
 {
     Super::NativeConstruct();
 
-    SetIsFocusable(true); // ✅ Required for drag input from widget
-
-    UWorld* World = GetWorld();
-    if (!World) return;
-
-    // Find the Material Manager actor in the level
-    for (TActorIterator<AMaterialAPIManager> It(World); It; ++It)
+    const FString MaterialPath = TEXT("/Game/assets/M_BaseMaterial.M_BaseMaterial");
+    BaseMaterial = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, *MaterialPath));
+    if (!BaseMaterial)
     {
-        AMaterialAPIManager* Mgr = *It;
-        if (!Mgr) continue;
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to load BaseMaterial from: %s"), *MaterialPath);
+    }
 
-        // Bind to its delegate and kick off fetching
-        Mgr->OnMaterialsReady.AddDynamic(this, &UUIUserWidget::HandleMaterialsReady);
-        Mgr->FetchTileMaterials();
-        break;
+    SetIsFocusable(true);  // Critical
+    SetVisibility(ESlateVisibility::Visible);
+
+    // Root canvas
+    if (!WidgetTree->RootWidget)
+    {
+        UCanvasPanel* RootPanel = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("RootCanvas"));
+        WidgetTree->RootWidget = RootPanel;
+    }
+
+    // Create ScrollBox (direct child of root)
+    MaterialsScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass(), TEXT("MaterialsScrollBox"));
+
+    if (UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetTree->RootWidget))
+    {
+        UCanvasPanelSlot* ScrollSlot = RootCanvas->AddChildToCanvas(MaterialsScrollBox);
+        ScrollSlot->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+        ScrollSlot->SetOffsets(FMargin(0.f));
+    }
+
+    // Bind material manager
+    if (UWorld* World = GetWorld())
+    {
+        for (TActorIterator<AMaterialAPIManager> It(World); It; ++It)
+        {
+            if (AMaterialAPIManager* Mgr = *It)
+            {
+                Mgr->OnMaterialsReady.AddDynamic(this, &UUIUserWidget::HandleMaterialsReady);
+                Mgr->FetchTileMaterials();
+                break;
+            }
+        }
     }
 }
 
+
 void UUIUserWidget::HandleMaterialsReady(const TArray<FTileMaterialData>& DownloadedTiles)
 {
-    TArray<FFloorMaterialData> UIData;
-    for (auto& T : DownloadedTiles)
+    if (!BaseMaterial)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ BaseMaterial is not set in UIUserWidget"));
+        return;
+    }
+
+    TArray<FFloorMaterialData> FinalTiles;
+
+    for (const FTileMaterialData& T : DownloadedTiles)
     {
         FFloorMaterialData D;
         D.Name = T.ID;
         D.PreviewTexture = T.DownloadedTexture;
         D.MaterialURL = T.BaseColorURL;
-        UIData.Add(D);
+
+        if (T.DownloadedTexture)
+        {
+            UMaterialInstanceDynamic* DynMat = UMaterialInstanceDynamic::Create(BaseMaterial, this);
+            DynMat->SetTextureParameterValue(FName("BaseColor"), T.DownloadedTexture);
+            D.MaterialAsset = DynMat;
+
+            UE_LOG(LogTemp, Log, TEXT("✅ Material created for: %s"), *T.ID);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("❌ Missing texture for %s"), *T.ID);
+        }
+
+        FinalTiles.Add(D);
     }
-    InitializeMaterials(UIData);
+
+    InitializeMaterials(FinalTiles);
     UE_LOG(LogTemp, Log, TEXT("HandleMaterialsReady: received %d tiles"), DownloadedTiles.Num());
 }
 
 void UUIUserWidget::InitializeMaterials(const TArray<FFloorMaterialData>& Materials)
 {
-    if (!MaterialsScrollBox) return;
+    if (!MaterialsScrollBox)
+    {
+        MaterialsScrollBox = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
+
+        // Only set the root if it's not already set
+        if (!WidgetTree->RootWidget)
+        {
+            UCanvasPanel* RootPanel = WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass());
+            WidgetTree->RootWidget = RootPanel;
+
+            RootPanel->SetVisibility(ESlateVisibility::Visible);
+            RootPanel->SetIsEnabled(true);
+
+            UCanvasPanelSlot* ScrollSlot = RootPanel->AddChildToCanvas(MaterialsScrollBox);
+            ScrollSlot->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
+            ScrollSlot->SetOffsets(FMargin(0.f));
+        }
+    }
 
     MaterialsScrollBox->ClearChildren();
     MaterialEntryMap.Empty();
@@ -72,6 +143,8 @@ void UUIUserWidget::InitializeMaterials(const TArray<FFloorMaterialData>& Materi
         MaterialEntryMap.Add(Entry, Data);
     }
 }
+
+
 
 UBorder* UUIUserWidget::CreateMaterialEntry(const FFloorMaterialData& Data)
 {
@@ -107,32 +180,29 @@ FReply UUIUserWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const
 {
     if (InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton))
     {
+        FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
+        CachedMousePosition = ScreenPos;  // ✅ FIX: Cache for drop use
+
         for (const TPair<UBorder*, FFloorMaterialData>& Pair : MaterialEntryMap)
         {
             UBorder* Entry = Pair.Key;
             if (!Entry) continue;
 
-            FVector2D ScreenPos = InMouseEvent.GetScreenSpacePosition();
             const FGeometry& EntryGeo = Entry->GetCachedGeometry();
-
-            // Log screen position & border info
-            UE_LOG(LogTemp, Log, TEXT("Checking entry: %s"), *Pair.Value.Name);
 
             if (EntryGeo.IsUnderLocation(ScreenPos))
             {
                 DraggedBorder = Entry;
                 UE_LOG(LogTemp, Log, TEXT("Mouse down on: %s"), *Pair.Value.Name);
 
-               // return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, Entry, EKeys::LeftMouseButton).NativeReply;
-               // ✅ FIX: Pass `this` to DetectDragIfPressed
-                return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, this, EKeys::LeftMouseButton).NativeReply;
-
+                return UWidgetBlueprintLibrary::DetectDragIfPressed(InMouseEvent, Entry, EKeys::LeftMouseButton).NativeReply;
             }
         }
     }
 
     return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
+
 
 
 void UUIUserWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent, UDragDropOperation*& OutOperation)
@@ -149,6 +219,10 @@ void UUIUserWidget::NativeOnDragDetected(const FGeometry& InGeometry, const FPoi
 
     UE_LOG(LogTemp, Log, TEXT("Dragging material: %s"), *DraggedData.Name);
 }
+bool UUIUserWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
+{
+    return true;
+}
 
 bool UUIUserWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
 {
@@ -159,22 +233,34 @@ bool UUIUserWidget::NativeOnDrop(const FGeometry& InGeometry, const FDragDropEve
 
     const FFloorMaterialData& Data = MaterialEntryMap[Dropped];
 
+    // Convert drop screen position to world
+    FVector2D ScreenPos = InDragDropEvent.GetScreenSpacePosition();
+
     APlayerController* PC = GetWorld()->GetFirstPlayerController();
     if (!PC) return false;
 
-    Aroom_vizCharacter* Character = Cast<Aroom_vizCharacter>(PC->GetPawn());
-    if (Character)
+    FVector WorldOrigin, WorldDirection;
+    if (PC->DeprojectScreenPositionToWorld(ScreenPos.X, ScreenPos.Y, WorldOrigin, WorldDirection))
     {
-        Character->OnMaterialDropped(Data); // Call your character logic
-        return true;
+        FVector TraceStart = WorldOrigin;
+        FVector TraceEnd = WorldOrigin + (WorldDirection * 10000.f);
+
+        FHitResult Hit;
+        FCollisionQueryParams Params;
+        Params.bReturnPhysicalMaterial = false;
+        Params.AddIgnoredActor(PC->GetPawn());
+
+        if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+        {
+            UPrimitiveComponent* HitComp = Hit.GetComponent();
+            if (HitComp && Data.MaterialAsset)
+            {
+                HitComp->SetMaterial(0, Data.MaterialAsset);
+                UE_LOG(LogTemp, Log, TEXT("✅ Applied material: %s to %s"), *Data.Name, *HitComp->GetName());
+                return true;
+            }
+        }
     }
 
     return false;
 }
-
-bool UUIUserWidget::NativeOnDragOver(const FGeometry& InGeometry, const FDragDropEvent& InDragDropEvent, UDragDropOperation* InOperation)
-{
-    return true;
-}
-
-
